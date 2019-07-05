@@ -1,0 +1,600 @@
+---
+title: "DataMining_BackPain_Project"
+author: "Hai Long, Le- 18200524"
+date: "April 15, 2019"
+output: html_document
+---
+
+
+#  IMPORT PACKAGES AND DATA.
+
+```{r  message=FALSE, warning=FALSE}
+library(caret)
+library(corrplot)
+library(randomForest)
+library(adabag)
+library(ROCR)
+library(tidyverse)
+```
+
+
+```{r}
+load('D:/UCD/Data Mining/Project/backpain (1).RData') 
+```
+
+
+```{r}
+library(doParallel)
+cl <- makeCluster(2)
+registerDoParallel(cl)
+
+```
+
+
+
+
+Machine Learning is not just a simple step of applying the well-known algorithms to the Dataset to get the prediction accuracy. More than that, in order to get the best out of, Machine Learning requires multiple other steps such as: Feature Selection, Pre-Processing, Algorithm Evaluation, and Parameters Tuning. In my project, I will apply these steps to Backpain Dataset to get the best performance and make the Machine Learning even much more powerful. The main objective of this project is to build the Predictive Model for Binary Classification of Backpain Dataset to optimize the clinical outcomes. Using different of methods to train, evaluate, and discuss to find out the most effective method. Building the powerful Machine Learning Classifier is important but it is not the only factor of this project. I will also apply the knowledges I have learnt throughout this module to get other interesting and dynamic features to understand more about how the algorithms work such as the Variable Importance, Resampling techniques, Bias-Variance TradeOff, Model Comparison and Selection, etc. I will focus on 3 Classification methods we spent quite time in this module to train my model which are: Ensemble, Bagging, and Kernel. Moreover, I
+will perform the Tuning Parameters to improve the performance baseline models in order to have the best prediction on the unseen data.
+
+
+
+
+# 1. INTRODUCTION 
+
+
+The Dataset "Backpain" we use for this project have 380 observations, 31 Predictors with Target is in binary class (Nociceptive/ Neuropathic). This Dataset is the collection of both categorical and numerical predictors. We are required to build the Binary Classifier to optimize the clinical outcomes by predicting either that person has Nociceptive or Neuropathic.
+
+The main objective of this project is to apply the knowledges I have learnt in this Module to build the Machine Learning and get the most out of it, and evaluate using multiple performance metrics.
+
+First of all, I will split my data into 3 parts: Train Set, Validation Set, and Test Set to allow how much of the data my Machine Learning model are allowed to see. After that, I will break my projects into 6 small tasks:
+
+*Task 1: Exploratory-Data-Analysis. This task will have me understand more about my
+data using Descriptive analysis.
+*Task 2: Transforming Data. At this step I will transform my data to more standardized
+structure to help the machine learning model easily uncover my data
+*Task 3: Apply Algorithm to Baseline Models and Evaluate. At this step, I will apply 3
+different methods(Ensemble, Bagging, Kernel) to train my baseline model and then
+evaluate them using Validation set.
+*Task 4: Improve Accuracy: I will apply some Feature Selection methods and PreProcessing to the Baseline models and evaluate Validation set to check for improvements.
+*Task 5: Tuning Parameters: I will select 2 best model from Baseline models to tune the
+parameters to improve the results.
+*Task 6: Finalize Model: I will select the "best" model to predict for unseen data in Test
+set and present the classification results.
+
+
+
+Along with the small tasks above, I will answers some interesting questions relate to my machine learning model for this dataset. I would like to know both Bias and Variance of each Baseline models on the Train Set. Also, I believe that I would be helpful if I can know the prediction of my Baseline models on the Validation Set (underfitting, well-fitting, or overfitting). As I will apply the Pre-Processing to my models, I am interested in how beneficial the Pre-Processing steps will contribute to the overall accuracy of Validation Test. In this step, I will make the decision based on the Variable Importance given by Random Forest, and try to standardize and reduce data dimensions the data by Principle Components. Furthermore, I will try to figure out the best parameters of top 1 baseline models to improve the accuracy for the Test Set. The dataset is balanced data so I will access the performance of my models using Accuracy, Specificity, Sensitivity, and ROC curve.
+
+
+
+# 2. DATA SPLITTING.
+
+```{r}
+set.seed(123)
+inTrain <- createDataPartition(y = dat$PainDiagnosis, p = 0.90, list= FALSE)
+TrainandValidationSet <- dat[inTrain,]
+TestSet <- dat[-inTrain,]
+```
+
+
+```{r}
+set.seed(123)
+inTrain2 <- createDataPartition(y = TrainandValidationSet$PainDiagnosis, p = 0.80, list= FALSE)
+TrainSet <- TrainandValidationSet[inTrain2,]
+ValidationSet <- TrainandValidationSet[-inTrain2,]
+```
+
+
+In this project, I divided my dataset into 3 different sets which are Train Set, Validation Set, and Test Set. Train Set is the set of data to train/ fit the models. The models can see the whole data to learn from it. Validation Set will be used to evaluate the model fit based on the Train Set. Validation Set will provide unbiased evaluation on the models. Using Validation Set, I will access the ability of model fit whether overfitting or underfitting. The Test Set is to evaluate the final model fit on the unseen data to confirm the prediction power. I randomly selected 10% of my data as Test Set, 20% of remaining data as Validation Set, and the rest is Train Set.
+
+
+
+
+# 3. EDA (EXPLORATORY DATA ANALYSIS)
+
+
+```{r}
+glimpse(TrainSet)
+```
+
+
+Performing the Exploratory Data Analysis would help us to understand more about the dataset we are working with. There are 2 types of Data which are Numeric and Categorical in the dataset. We want to look into the set of Numerical and set of Categorical separately to see if the datatype of all variables make sense. In other words, I maybe miss-typed if the categorical data has too many levels. 
+
+
+```{r}
+Num_Var <- unlist(lapply(TrainSet, is.numeric))  
+Cat_Var <-  unlist(lapply(TrainSet, is.factor))
+```
+* The chunk of code above is to separate the numerical variables and categorical variables into 2 subsets. 
+
+
+```{r}
+str(TrainSet[,Cat_Var])
+```
+
+
+#### Correlation Plot of Numeric Variable
+
+```{r}
+corrplot(cor(TrainSet[,Num_Var]), method="circle", type= "upper")
+```
+
+
+Some of numeric variables have very strong correlation (Pearson type), this is a strong indication of using PCA to pre-process data in later steps. 
+
+
+```{r}
+prop.table(table(TrainSet$PainDiagnosis))
+```
+
+The ratio of 2 levels of response variable (Nociceptive and Neuropathic) is quite balanced in Train Data. We do not need to worry about Imbalanced Data in this Dataset.  
+
+
+
+
+# 3. Feature Selection
+
+####  3.1 NZV and ZV
+
+```{r}
+
+Near_Zero_Variance = nearZeroVar(TrainSet, saveMetrics = T)
+Near_Zero_Variance[Near_Zero_Variance[, "zeroVar"] > 0, ]
+Near_Zero_Variance[Near_Zero_Variance[, "nzv" ] > 0, ]
+```
+
+
+
+
+#### 3.2 Variable Selection using Variable Importance
+
+Variable Selection is an important step of model building. The Variable Selection is expected to improve the prediction accuracy by eliminating the unnecessary variables to remove the noise and improve computation efficiency. Building the "quick random forest" with 500 trees and accessing the Variable Importance, I will remove few least contributing Variables based on Mean Decrease Gini. The Predictors with low Mean Decrease Gini will not appear in many splits in tree-based models.
+
+
+```{r}
+set.seed(123)
+Quick.rf <- randomForest(PainDiagnosis ~ ., data=TrainSet, ntree=1000)
+varImpPlot(Quick.rf,type=2)
+```
+
+The Variables have low Mean Decrease Gini have direct proportion to their participation in growing trees. We can remove some least important variables such as Gender, Criterion32, Criterion20, Criterion10
+
+
+
+
+
+# 4. Model Building.
+
+## 4.1 Baseline Experiment with methods. 
+
+
+In my Baselines models, I have used 4 different methods which are Random Forest, Bagging, Boosting, and SVM. After that, I will access the Bias Error and Variance Error of these baseline models. 
+
+
+```{r}
+set.seed(123)
+trainControl <- trainControl(method="repeatedcv", number=10, repeats=3)
+metric <- "Accuracy"
+```
+
+
+
+"Repeated Cross-Validation" is a powerfulresampling technique to estimate the accuracy of the model. In my project, with 10-fold and each fold will be repeated the estimation for 3 times. In other words, it will divide my data into 10 folds, 9 folds will be use to train the model and then test the error rate with 1 fold left, and it will be repeated for 3 times. The error rate of estimations will be averaged out to have the expected error of the whole model. Using this Repeated CV not only gives the better estimation of model performance but also reduce the Bias to improve the Prediction Accuracy.
+
+
+
+
+#### Ensemble Method (Random Forest)
+
+```{r  message=FALSE, warning=FALSE}
+set.seed(123)
+fit.rf <- train(PainDiagnosis~., data=TrainSet, method="rf", metric=metric, trControl=trainControl)
+```
+
+
+Random Forest: is a powerful classification method using tree-based model with bootstrapping to make it more stable and reliable. Random Forest will take the bootstrap of the data, build the classification tree at each split using only the random subset of variables and then test with OutOf-Bag samples.
+
+
+#### Bagging (adabag)
+
+```{r}
+set.seed(123)
+fit.bagging <- train(PainDiagnosis~., data=TrainSet, method="treebag", metric=metric, trControl=trainControl)
+```
+
+
+Bagging: is also known as Bootstrap Aggregation. Bagging works quite similar to Random Forest. The main difference between these 2 methods is Bagging does not create the subset of variable at random. Theoretically, Random Forest is expected to be more powerful than Bagging.
+
+
+
+#### SVM
+```{r  message=FALSE, warning=FALSE}
+set.seed(123)
+fit.svmRadial <- train(PainDiagnosis~., data=TrainSet, method="svmPoly", metric=metric, trControl=trainControl)
+
+```
+
+
+SVM: is the method classifies data using hyperplane. SVM is solved using the Constrained Optimization problem by finding the Maximum Margin Hyperplane, and applying Cost function. For Non-Linearity, It transform the data to high-dimension to separate the linear plane easier
+
+
+#### Boosting
+
+```{r  message=FALSE, warning=FALSE}
+fit.boosting <- train(PainDiagnosis~., data=TrainSet, method="adaboost", metric=metric, trControl=trainControl)
+```
+
+
+Boosting: is another ensemble technique to create a strong classifier from many weak learner. Weak learners are prepared on the training data using Weighting. At each iteration, the misclassified observations will be upweighted. After that, Boosting classifies the Testing data using the calculated weighting
+
+
+
+```{r}
+results <- resamples(list(RF = fit.rf, Bagging = fit.bagging, SVM= fit.svmRadial, Boosting= fit.boosting))
+dotplot(results)
+```
+
+
+
+
+#### Accessing the Fit of Baseline Models with Validation Test
+
+
+
+```{r}
+validation.predict.rf <- predict(fit.rf, ValidationSet)
+ConfMat.RF <- confusionMatrix(validation.predict.rf, ValidationSet$PainDiagnosis)
+ConfMat.RF$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.boosting <- predict(fit.boosting, ValidationSet)
+ConfMat.Boosting <- confusionMatrix(validation.predict.boosting, ValidationSet$PainDiagnosis)
+ConfMat.Boosting$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.svm <- predict(fit.svmRadial, ValidationSet)
+ConfMat.svm <- confusionMatrix(validation.predict.svm, ValidationSet$PainDiagnosis)
+ConfMat.svm$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.bagging <- predict(fit.bagging, ValidationSet)
+ConfMat.bagging <- confusionMatrix(validation.predict.bagging, ValidationSet$PainDiagnosis)
+ConfMat.bagging$overall['Accuracy'] 
+```
+
+```{r}
+Validation_Result <- c(ConfMat.RF$overall['Accuracy'] , ConfMat.Boosting$overall['Accuracy'],
+                       ConfMat.svm$overall['Accuracy'] , ConfMat.bagging$overall['Accuracy'])
+Validation_Method <- c("RF", "Boosting", "SVM", "Bagging")
+dotchart(Validation_Result,labels=Validation_Method)
+         
+```
+
+
+In my Baselines models, I have used 4 different methods which are Random Forest, Bagging, Boosting, and SVM. Looking at the Accuracy metrics for Training Set, SVM performs the best among methods, Boosting and Random Forest have quite similar accuracy. However, Random Forest seems to have the lowest variance. 
+
+The Accuracy for all 4 Baseline Models significantly changes when we test with the Validation Test. Boosting and Random Forest have the same Accuracy and outperform SVM and Bagging. Comparing the Accuracy of Training Data and Validation Data, SVM and Bagging overfitting, Boosting is underfitting, and Random Forest is well fit. At this stage, I think Random Forest is chosen model because it gives the most consistent accuracy among 4 models and it is the "best" model in term of Bias-Variance Trade-Off.
+
+
+
+
+##  4.2 Improve Accuracy with Variable Selection (VarImp), Standardized Data, and PCA.
+
+
+```{r}
+Trainset_Select <- TrainSet
+```
+
+
+From the Variable Selection step above using VarImp method, I could find out some unimportant variables. In other word, I will not contribute any information to to tree-based model in model building. Moreover, I will also eliminate some unwanted noise in building model.
+
+
+```{r}
+Trainset_Select$Gender <- NULL
+Trainset_Select$Criterion32 <- NULL
+Trainset_Select$Criterion20 <- NULL
+Trainset_Select$SurityRating <- NULL
+```
+
+
+```{r }
+preProcess2 <- preProcess(Trainset_Select[,-1], method= c("center", "scale", "pca"))
+Trainset_Select[,-1] <- predict(preProcess2, Trainset_Select[,-1])
+```
+
+
+Standardize Data will make the attributes have Mean of 0, Variance of 1. In other words, Standardized data will treat all the variables in our data equally. It also supports PCA. 
+
+PCA is a multivariate technique to deal with highly correlated variable, and to perform the dimensionality reduction with minimal loss of the information. PCA will extract the important information of the whole dataset and will express with fewer new variables. After performing the EDA of the dataset using Pearson Correlation for Continuous Variables, I have figured out that there are some highly correlated variables so It may useful to apply PCA to data.
+
+
+#### preProcess Summary
+
+```{r}
+preProcess2
+```
+
+
+The Variables have low Mean Decrease Gini have direct proportion to their participation in growing trees. We can remove some least important variables such as Gender, Criterion32, Criterion20, Criterion10 from VarImp. Furtheremore, by applying these 2 techniques to my data, I successfully reduced 7 columns in Dataset but still can expect almost full information. 
+
+
+
+```{r}
+set.seed(123)
+trainControl <- trainControl(method="repeatedcv", number=10, repeats=3)
+metric <- "Accuracy"
+```
+
+
+
+
+
+
+#### Random Forest 
+
+```{r}
+set.seed(123)
+fit.rf.select <- train(PainDiagnosis~., data=Trainset_Select, method="rf", metric=metric, trControl=trainControl)
+```
+
+
+#### Bagging (treebag)
+
+```{r}
+set.seed(123)
+fit.bagging.select <- train(PainDiagnosis~., data=Trainset_Select, method="treebag", metric=metric, trControl=trainControl)
+```
+
+
+#### SVM
+
+```{r}
+set.seed(123)
+fit.svmRadial.select <- train(PainDiagnosis~., data=Trainset_Select, method="svmPoly", metric=metric,trControl=trainControl)
+
+```
+
+#### Boosting
+
+```{r}
+fit.boosting.select <- train(PainDiagnosis~., data=Trainset_Select, method="adaboost", metric=metric, trControl=trainControl)
+```
+
+
+
+#### Result of Traning Set
+
+```{r}
+results.select <- resamples(list(RF = fit.rf.select, Bagging = fit.bagging.select, SVM= fit.svmRadial.select, Boosting= fit.boosting.select))
+dotplot(results.select)
+```
+
+
+
+
+#### Test Pre-Process with Validation Test
+
+
+```{r}
+ValidationSet.Select <- ValidationSet
+```
+
+
+
+```{r}
+ValidationSet.Select$Gender <- NULL
+ValidationSet.Select$Criterion32 <- NULL
+ValidationSet.Select$Criterion20 <- NULL
+ValidationSet.Select$SurityRating <- NULL
+```
+
+
+```{r}
+ValidationSet.Select[,-1] <- predict(preProcess2, ValidationSet.Select[,-1])
+```
+
+
+
+
+```{r}
+validation.predict.rf.select <- predict(fit.rf.select, ValidationSet.Select)
+ConfMat.RF.select <- confusionMatrix(validation.predict.rf.select, ValidationSet.Select$PainDiagnosis)
+ConfMat.RF.select$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.boosting.select <- predict(fit.boosting.select, ValidationSet.Select)
+ConfMat.Boosting.select <- confusionMatrix(validation.predict.boosting.select, ValidationSet.Select$PainDiagnosis)
+ConfMat.Boosting.select$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.svm.select <- predict(fit.svmRadial.select, ValidationSet.Select)
+ConfMat.svm.select <- confusionMatrix(validation.predict.svm.select, ValidationSet.Select$PainDiagnosis)
+ConfMat.svm.select$overall['Accuracy'] 
+```
+
+
+```{r}
+validation.predict.bagging.select <- predict(fit.bagging.select, ValidationSet.Select)
+ConfMat.bagging.select <- confusionMatrix(validation.predict.bagging.select, ValidationSet.Select$PainDiagnosis)
+ConfMat.bagging.select$overall['Accuracy'] 
+```
+
+
+```{r}
+Validation_Result.select <- c(ConfMat.RF.select$overall['Accuracy'] , ConfMat.Boosting.select$overall['Accuracy'],
+                       ConfMat.svm.select$overall['Accuracy'] , ConfMat.bagging.select$overall['Accuracy'])
+Validation_Method.select <- c("RF", "Boosting", "SVM", "Bagging")
+dotchart(Validation_Result.select,labels=Validation_Method.select)
+         
+```
+
+
+The Accuracy of models after Pre-Processing and Variable Selection on training data are quite identical to Baseline Models, except the accuracy of Bagging is slightly improve. Similarly, The Accuracy of models after Pre-Processing and Variable Selection on Validation data is quite similar. However, The SVM is well fits and no longer overfitting as in Baseline Models. Random Forest still be the most consistent model in both Training and Validation data, in both Baseline and after transformation. 
+I decided to apply Pre-Processing and Variable Selection to Random Forest, to perform Tuning Parameters to improve the prediction ability of the model. This is also known as my Final Model. After Tuning Parameter, I would use my Final Model to predict for Test Data. Moreover, I would use the ROC metrics to tune parameters instead of Accuracy. 
+In the next step, I will apply Tuning Parameter technique to the Pre-Processing and Variable Selection to Random Forest.
+
+
+
+
+# 5. Tuning Parameters.
+
+From the Baseline Models, we would choose the "best" model in term of Bias-Variance Tradeoff to tune the parameters. Tuning Parameters is to find the optimal parameters for algorithm to make the powerful machine learning perform even better. Each machine learning will have unique parameters to tune. The algorithms are parameterized are expected to perform better.
+
+
+```{r}
+# Random Search 
+trainControl <- trainControl(method="repeatedcv", number=10, repeats=3, search="random",summaryFunction = twoClassSummary,classProbs = TRUE) 
+set.seed(123)
+metric <- "ROC"
+mtry <- sqrt(ncol(Trainset_Select[,-1])) 
+rfRandom <- train(PainDiagnosis~., data=Trainset_Select, method="rf", metric=metric, tuneLength=15, trControl=trainControl) 
+```
+
+
+
+```{r}
+rfRandom
+```
+
+
+
+```{r}
+plot(rfRandom)
+```
+
+
+```{r}
+print(rfRandom) 
+```
+
+
+For Random Forest model, I would tune the "mtry" which is the random selected Predictors. In others words, my tuning parameter is the number of selected predictor at each split. From the result of tuning parameter for Random Forest, the best "mtry" for my model on Training Data is at 5 because it has the highest ROC of 97.73% for Training Data
+
+
+
+# 6. Test the Final model with Test Data 
+
+
+
+
+```{r}
+TestSet$Gender <- NULL
+TestSet$Criterion32 <- NULL
+TestSet$Criterion20 <- NULL
+TestSet$SurityRating <- NULL
+```
+* Eliminate the unimportant variables found from Variable Selection steps above.
+
+
+```{r}
+TestSet[,-1] <- predict(preProcess2, TestSet[,-1])
+```
+* PreProcess the Data similar to previous step.
+
+
+
+```{r}
+TestSet.Predict <- predict(rfRandom, TestSet)
+Final <- confusionMatrix(TestSet.Predict, TestSet$PainDiagnosis)
+Final
+```
+* Predict the Test Set using final model and accessing the accuracy metric.
+
+
+Finally, I applied my "parameterized final model" to predict for Test Data and accessing the Performance Metrics by Confusion Matrix and ROC curve. Looking at the Confusion Matrix, Accuracy is 94.59%, which means my Final Model correctly classified 35 observation out of 37 observations in Test Data without looking at Test Data in advanced. We have balanced Responses (Nociceptive, Neuropathic) so the Balanced Accuracy is quite high as expected which is 94.56%. The Sensitivity is 95.00%, which means 19 out 20 observations were correctly classified as Nociceptive. Similarly, The Specificity is 94.12%, which means 16 out of 17 observations from Neuropathic were correctly classified.
+
+
+We have balanced class data, besides the Accuracy, I will access other performance metrics such as Balanced Accuracy, Sensitivity and Specificity. Because of Binary Classification, I would pay more attention on ROC Curve to have a deeper look into Sensitivity and Specificity.
+
+
+#### Convert Predicted Values of Test Set to Probablity for ROC curve.
+
+```{r}
+Pred_prob <-  predict(rfRandom, TestSet, type = "prob")
+Pred_prob_Neuro <-  as.data.frame(Pred_prob)
+Pred_prob_Neuro <- Pred_prob_Neuro[,2]
+```
+
+
+
+
+```{r}
+ROC_Actual = ifelse(TestSet$PainDiagnosis == "Nociceptive",0,1)
+```
+
+
+```{r}
+library(ROCR)
+predobj<-prediction(as.numeric(Pred_prob_Neuro), as.numeric(ROC_Actual))
+```
+
+
+```{r}
+perf <- performance(predobj,"tpr","fpr")
+```
+
+
+
+```{r}
+plot(perf, main = "ROC Curve AUC=99.70%")
+```
+
+
+```{r}
+auc2 <- performance(predobj, measure = "auc")
+auc2@y.values[[1]]
+```
+
+```{r}
+cutoffs <- data.frame(cut=perf@alpha.values[[1]], fpr=perf@x.values[[1]], 
+                      tpr=perf@y.values[[1]])
+head(subset(cutoffs, tpr >= 0.9))
+```
+
+
+```{r}
+# Maximize Sum of Specificity and Sensitivity find optimal Threshold.
+cutoffs$Sum <- cutoffs$tpr - cutoffs$fpr
+head(subset(cutoffs, Sum >= 0.95))
+```
+
+
+```{r}
+perf2 <- performance(predobj, "sens","spec")
+t.ind <- which.max(unlist(perf2@x.values) + unlist(perf2@y.values))
+tau   <- unlist(perf2@alpha.values)[t.ind]
+tau
+```
+
+
+
+```{r}
+plot(perf, main = "ROC Curve AUC=99.70%")
+points(0.05, y =1, type = "p", col="red")
+text(0.8, 0.4, "AUC = 99.70%")
+text(0.15, 0.9, "optimal Tau=0.486")
+
+```
+
+
+
+
+The ROC is a more in-depth look into the Sensitivity and Specificity. Particularly, the ROC of Binary Classification problem is the trade-off between Sensitivity and Specificity. In order to measure ROC, we need to have the Predicted value as Probability. The ROC Curve for my "Parameterized Final Model" on Test Data is very close to 45-degree line, which means the AUC is extremely close to one. In fact, the Area Under Curve (AUC) for my ROC curve is 99.70%. Moreover, the optimal threshold for my ROC curve is at tau=0.486. At this threshold, the sum of Sensitivity and Specificity is maximized (Sensitivity = 100%, Specificity is 95%). In other words, at tau=0.486 my model is able to distinguish between Nociceptive and Neuropathic at its best. 
+
+
+
+Comparing to limited classification abilities of Logistic Regression (~85% on both Training and Validation Data), Machine Learning algorithms are totally a better approach for this Binary Classification problem on this clinical dataset. There are some disadvantages with Machine Learning algorithms such as interpretability and computation efficiency but we clearly can optimize these 2 disadvantages. We can understand which variables are important in growing the trees in Tree-Based models by accessing the Variable Importance calculated by Mean Decrease Gini. This idea also support Variable Selection step in my project. Combining with PrincipleComponent Analysis, I could successfully reduce 7 variables in my data to improve the computation efficiency. Using Baseline Models to compare on both Train and Validation data, I decided to choose Random Forest (with Variable Selection, Pre-Processing) as my "best" model
+in term of Bias-Variance error. Furthermore, to improve my Final Model, I could tune parameters and figured out that with "mtry"=5 (random selected Predictors at each split) is the "best" parameter for my "Parameterized Final Model". In fact, my "Parameterized Final Model" performs really well on unseen data of Test Set. My model could correctly classified a whole Test Data with Accuracy of 94.59%, which is expected and quite similar to Accuracy on both Train and Validation data. For binary classification problem, Sensitivity, Specificity and trade-off of SensitivitySpecificity (ROC curve) are critical performance metrics. ROC curve and its Area-Under-Curve (AUC) would provide how well my model can distinguish between Nociceptive and Neuropathic. My model has AUC of 99.70%, which is extreme strong ability to distinguish between 2 classes in this problem. Even more, at the threshold of tau=0.486, where sum of Sensitivity and Specificity is maximized, my "parameterized final model" can distinguish between Nociceptive and Neuropathic at its best with (Sensitivity = 100%, Specificity is 95%).
+
+
+
